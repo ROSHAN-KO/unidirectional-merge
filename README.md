@@ -1,5 +1,4 @@
 # unidirectional-merge
 ---
-# This is the staging branch
+# This is the main branch
 ---
-## unidirectional merging testing started
