@@ -1,49 +1,72 @@
-name: 🛡️ Gatekeeper - Block Pollution
+name: 🛡️ Gatekeeper - Strict Branch Isolation
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
-  check-history:
-    name: Check for Illegal Merges
+  check-pollution:
+    name: Check for Illegal Upstream Sources
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0 # IMPORTANT: We need full history to scan logs
+          fetch-depth: 0 # CRITICAL: We need full history to trace ancestry
 
-      - name: Scan Commit Logs
+      - name: Detect Upstream Pollution
         run: |
-          echo "🔍 Scanning PR commit history for forbidden merges..."
+          # 1. Define the branches you want to PROTECT (Users cannot pull FROM these)
+          # Add any branch names here (space separated)
+          FORBIDDEN_BRANCHES=("staging" "preproduction" "master")
           
-          # Define branches that should NEVER be merged into a feature branch
-          # Case insensitive matching for staging, preproduction, master, main
-          FORBIDDEN_PATTERN="Merge (remote-tracking )?branch '.*(staging|preproduction|master|main)'"
+          # The branch we are merging INTO (usually main)
+          TARGET_BRANCH="origin/${{ github.base_ref }}"
           
-          # Get all commit messages in this PR (from base to head)
-          # origin/${{ github.base_ref }} is where we are merging INTO
-          COMMITS=$(git log --format='%s' origin/${{ github.base_ref }}..HEAD)
+          CURRENT_HEAD="HEAD"
           
-          # Check if any commit message matches the forbidden pattern
-          if echo "$COMMITS" | grep -iE "$FORBIDDEN_PATTERN"; then
-            echo "--------------------------------------------------------"
-            echo "🚨 VIOLATION DETECTED: Upstream Branch Pollution"
-            echo "--------------------------------------------------------"
-            echo "You have merged a protected upstream branch (staging/preprod/master)"
-            echo "into your feature branch. This is strictly prohibited."
-            echo ""
-            echo "EVIDENCE (Found in logs):"
-            echo "$COMMITS" | grep -iE "$FORBIDDEN_PATTERN"
-            echo "--------------------------------------------------------"
-            echo "💡 HOW TO FIX:"
-            echo "1. Run: git rebase -i HEAD~N (where N is how far back the merge is)"
-            echo "2. Drop the merge commit."
-            echo "3. Or: Create a fresh branch and cherry-pick your changes."
-            echo "--------------------------------------------------------"
-            exit 1
+          echo "🔍 Checking if branch is polluted by upstream sources..."
+          echo "Target Branch: $TARGET_BRANCH"
+
+          # Fetch updates to ensure we are comparing against the latest remote state
+          git fetch origin
+
+          VIOLATION_FOUND=false
+
+          for BRANCH in "${FORBIDDEN_BRANCHES[@]}"; do
+            REMOTE_BRANCH="origin/$BRANCH"
+
+            # Check if the forbidden branch actually exists on remote
+            if git show-ref --verify --quiet "refs/remotes/$REMOTE_BRANCH"; then
+              
+              # LOGIC:
+              # If (Staging is inside Feature) AND (Staging is NOT inside Main)
+              # Then -> The user pulled Staging into Feature (BAD)
+
+              # Check 1: Is the Forbidden Branch an ancestor of the PR branch?
+              if git merge-base --is-ancestor "$REMOTE_BRANCH" "$CURRENT_HEAD"; then
+                
+                # Check 2: Is that Forbidden Branch ALREADY in Main? (If so, it's safe)
+                if ! git merge-base --is-ancestor "$REMOTE_BRANCH" "$TARGET_BRANCH"; then
+                  echo "--------------------------------------------------------"
+                  echo "🚨 VIOLATION DETECTED: Illegal Pull from '$BRANCH'"
+                  echo "--------------------------------------------------------"
+                  echo "Reason: Your branch contains commits from '$BRANCH' that are not in '$TARGET_BRANCH'."
+                  echo "This means you did one of the following:"
+                  echo "  1. git pull origin $BRANCH (Fast-Forward or Merge)"
+                  echo "  2. git rebase origin/$BRANCH"
+                  echo "  3. git merge $BRANCH"
+                  echo ""
+                  echo "This is strictly prohibited to keep history clean."
+                  VIOLATION_FOUND=true
+                fi
+              fi
+            fi
+          done
+
+          if [ "$VIOLATION_FOUND" = true ]; then
+             exit 1
           else
-            echo "✅ History is clean. No illegal merges found."
-            exit 0
+             echo "✅ Branch history is clean. No upstream pollution detected."
+             exit 0
           fi
