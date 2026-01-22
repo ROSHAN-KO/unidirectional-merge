@@ -14,7 +14,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          # We need '0' to fetch all branches/history so we can compare them
           fetch-depth: 0 
 
       # ---------------------------------------------------------
