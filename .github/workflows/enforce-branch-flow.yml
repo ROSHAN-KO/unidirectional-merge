@@ -1,0 +1,64 @@
+name: Enforce Deployment Flow
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - preproduction
+      - master
+
+jobs:
+  validate-flow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          # We need '0' to fetch all branches/history so we can compare them
+          fetch-depth: 0 
+
+      # ---------------------------------------------------------
+      # RULE 1: PR to Preproduction requires code to be in Staging
+      # ---------------------------------------------------------
+      - name: Check Staging Requirement
+        if: github.base_ref == 'preproduction'
+        run: |
+          # 1. Fetch the comparison branch (staging)
+          git fetch origin staging:staging
+          
+          # 2. Identify the commit hash of the PR
+          PR_COMMIT=${{ github.event.pull_request.head.sha }}
+          
+          echo "Checking if Commit $PR_COMMIT exists in Staging..."
+
+          # 3. Check if the PR commit is an ancestor of Staging
+          if git merge-base --is-ancestor $PR_COMMIT staging; then
+            echo "✅ Success: This code has already been merged into Staging."
+          else
+            echo "❌ Blocked: You cannot merge to Preproduction yet."
+            echo "   Please ensure this specific commit is merged into 'staging' first."
+            exit 1
+          fi
+
+      # ---------------------------------------------------------
+      # RULE 2: PR to Master requires code to be in Preproduction
+      # ---------------------------------------------------------
+      - name: Check Preproduction Requirement
+        if: github.base_ref == 'master'
+        run: |
+          # 1. Fetch the comparison branch (preproduction)
+          git fetch origin preproduction:preproduction
+          
+          # 2. Identify the commit hash of the PR
+          PR_COMMIT=${{ github.event.pull_request.head.sha }}
+
+          echo "Checking if Commit $PR_COMMIT exists in Preproduction..."
+
+          # 3. Check if the PR commit is an ancestor of Preproduction
+          if git merge-base --is-ancestor $PR_COMMIT preproduction; then
+            echo "✅ Success: This code has already been merged into Preproduction."
+          else
+            echo "❌ Blocked: You cannot merge to Master yet."
+            echo "   Please ensure this specific commit is merged into 'preproduction' first."
+            exit 1
+          fi
